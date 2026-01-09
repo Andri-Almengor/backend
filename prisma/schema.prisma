@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Rol {
+  id          Int     @id @default(autoincrement())
+  nombre      String  @unique
+  descripcion String?
+
+  usuarios Usuario[]
+
+  @@map("roles")
+}
+
+model Usuario {
+  id           Int     @id @default(autoincrement())
+  nombre       String
+  email        String  @unique
+  passwordHash String  @map("password_hash")
+  rolId        Int     @map("rol_id")
+  rol          Rol     @relation(fields: [rolId], references: [id])
+  activo       Boolean @default(true)
+
+  noticias          Noticia[]
+  ForoHilo          ForoHilo[]
+  ForoRespuesta     ForoRespuesta[]
+  ForoRespuestaLike ForoRespuestaLike[]
+  eventosCreados    Evento[]            @relation("EventosCreados")
+
+  @@map("usuarios")
+}
+
+model Producto {
+  id            Int      @id @default(autoincrement())
+  categoria     String
+  marca         String
+  detalle       String?
+  imgProd       String?  @map("img_prod")
+  sello         String?
+  certifica     String?
+  pol           String?
+  logoSello     String?  @map("logo_sello")
+  gf            String?
+  logoGf        String?  @map("logo_gf")
+  tienda        String?
+  pesaj         String?
+  creadoEn      DateTime @default(now()) @map("creado_en")
+  actualizadoEn DateTime @default(now()) @map("actualizado_en")
+
+  hilos ForoHilo[]
+
+  @@map("productos")
+}
+
+model ForoCategoria {
+  id          Int      @id @default(autoincrement())
+  nombre      String   @unique
+  descripcion String?
+  creadoEn    DateTime @default(now()) @map("creado_en")
+
+  hilos ForoHilo[]
+
+  @@map("foro_categorias")
+}
+
+model ForoHilo {
+  id            Int      @id @default(autoincrement())
+  categoriaId   Int      @map("categoria_id")
+  usuarioId     Int      @map("usuario_id")
+  titulo        String
+  contenido     String
+  productoId    Int?     @map("producto_id")
+  esCerrado     Boolean  @default(false) @map("es_cerrado")
+  creadoEn      DateTime @default(now()) @map("creado_en")
+  actualizadoEn DateTime @default(now()) @map("actualizado_en")
+
+  categoria  ForoCategoria   @relation(fields: [categoriaId], references: [id])
+  usuario    Usuario         @relation(fields: [usuarioId], references: [id])
+  producto   Producto?       @relation(fields: [productoId], references: [id])
+  respuestas ForoRespuesta[]
+
+  @@map("foro_hilos")
+}
+
+model ForoRespuesta {
+  id            Int      @id @default(autoincrement())
+  hiloId        Int      @map("hilo_id")
+  usuarioId     Int      @map("usuario_id")
+  contenido     String
+  creadoEn      DateTime @default(now()) @map("creado_en")
+  actualizadoEn DateTime @default(now()) @map("actualizado_en")
+  esEliminado   Boolean  @default(false) @map("es_eliminado")
+
+  hilo    ForoHilo            @relation(fields: [hiloId], references: [id])
+  usuario Usuario             @relation(fields: [usuarioId], references: [id])
+  likes   ForoRespuestaLike[]
+
+  @@map("foro_respuestas")
+}
+
+model ForoRespuestaLike {
+  id          Int      @id @default(autoincrement())
+  respuestaId Int      @map("respuesta_id")
+  usuarioId   Int      @map("usuario_id")
+  creadoEn    DateTime @default(now()) @map("creado_en")
+
+  respuesta ForoRespuesta @relation(fields: [respuestaId], references: [id])
+  usuario   Usuario       @relation(fields: [usuarioId], references: [id])
+
+  @@unique([respuestaId, usuarioId], name: "uq_like_unico")
+  @@map("foro_respuestas_likes")
+}
+
+model Noticia {
+  id            Int      @id @default(autoincrement())
+  titulo        String
+  contenido     String?
+  imageUrl      String?  @map("image_url")
+  fileUrl       String?  @map("file_url")
+  creadoEn      DateTime @default(now()) @map("creado_en")
+  actualizadoEn DateTime @default(now()) @map("actualizado_en")
+
+  autorId Int     @map("autor_id")
+  autor   Usuario @relation(fields: [autorId], references: [id])
+
+  @@map("noticias")
+}
+
+model EventoSuscripcion {
+  id           Int      @id @default(autoincrement())
+  eventoId     Int      @map("evento_id")
+  deviceId     String   @map("device_id")
+  minutosAntes Int      @default(1440) @map("minutos_antes")
+  creadoEn     DateTime @default(now()) @map("creado_en")
+
+  evento Evento @relation(fields: [eventoId], references: [id], onDelete: Cascade)
+
+  @@unique([eventoId, deviceId], name: "uq_evento_device")
+  @@map("evento_suscripciones")
+}
+
+model Evento {
+  id          Int       @id @default(autoincrement())
+  titulo      String
+  descripcion String?
+  ubicacion   String?
+  inicio      DateTime
+  fin         DateTime?
+  todoElDia   Boolean   @default(false) @map("todo_el_dia")
+
+  creadoEn      DateTime @default(now()) @map("creado_en")
+  actualizadoEn DateTime @updatedAt @map("actualizado_en")
+
+  creadoPorId Int?     @map("creado_por_id")
+  creadoPor   Usuario? @relation("EventosCreados", fields: [creadoPorId], references: [id])
+
+  suscripciones EventoSuscripcion[]
+
+  @@map("eventos")
+}
