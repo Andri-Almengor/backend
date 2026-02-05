@@ -36,26 +36,38 @@ model Usuario {
 }
 
 model Producto {
-  id            Int      @id @default(autoincrement())
-  categoria     String
-  marca         String
-  detalle       String?
-  imgProd       String?  @map("img_prod")
-  sello         String?
-  certifica     String?
-  pol           String?
-  logoSello     String?  @map("logo_sello")
-  gf            String?
-  logoGf        String?  @map("logo_gf")
-  tienda        String?
-  pesaj         String?
-  creadoEn      DateTime @default(now()) @map("creado_en")
-  actualizadoEn DateTime @default(now()) @map("actualizado_en")
+  id              Int      @id @default(autoincrement())
+
+  catGeneral      String   @map("cat_general")
+  categoria1      String   @map("categoria_1")
+  fabricanteMarca String   @map("fabricante_marca")
+  nombre          String   @map("nombre")
+
+  certifica       String?  @map("certifica")
+  sello           String?  @map("sello")
+
+  atributo1       String?  @map("atributo_1")
+  atributo2       String?  @map("atributo_2")
+  atributo3       String?  @map("atributo_3")
+
+  tienda          String?  @map("tienda")
+
+  fotoProducto    String?  @map("foto_producto")
+  fotoSello1      String?  @map("foto_sello_1")
+  fotoSello2      String?  @map("foto_sello_2")
+
+  creadoEn        DateTime @default(now()) @map("creado_en")
+  actualizadoEn   DateTime @updatedAt @map("actualizado_en")
 
   hilos ForoHilo[]
 
+  @@index([catGeneral])
+  @@index([categoria1])
+  @@index([fabricanteMarca])
+  @@index([nombre])
   @@map("productos")
 }
+
 
 model ForoCategoria {
   id          Int      @id @default(autoincrement())

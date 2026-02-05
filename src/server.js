@@ -227,7 +227,7 @@ app.delete("/api/admin/usuarios/:id", authMiddleware, adminMiddleware, async (re
 app.get("/api/productos", async (req, res) => {
   try {
     const productos = await prisma.Producto.findMany({
-      orderBy: { marca: "asc" },
+      orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
     });
     res.json(productos);
   } catch (err) {
@@ -290,7 +290,7 @@ app.get("/api/productos/paged", async (req, res) => {
     const skip = (page - 1) * pageSize;
 
     const [items, total] = await Promise.all([
-      prisma.Producto.findMany({ skip, take: pageSize, orderBy: { marca: "asc" } }),
+      prisma.Producto.findMany({ skip, take: pageSize, orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }] }),
       prisma.Producto.count(),
     ]);
 
@@ -322,18 +322,88 @@ app.get("/api/productos/:id", async (req, res) => {
 
 app.get("/api/productos/search", async (req, res) => {
   try {
-    const { categoria, marca, gf, tienda, pesaj } = req.query;
+    const {
+      // ✅ nuevos filtros (v2.0)
+      catGeneral,
+      categoria1,
+      fabricanteMarca,
+      nombre,
+      certifica,
+      sello,
+      atributo,
+      tienda,
+      q,
+
+      // ✅ compatibilidad con filtros viejos
+      categoria,
+      marca,
+      gf,
+      pesaj,
+    } = req.query;
 
     const where = {};
-    if (categoria) where.categoria = { contains: categoria, mode: "insensitive" };
-    if (marca) where.marca = { contains: marca, mode: "insensitive" };
-    if (gf) where.gf = { contains: gf, mode: "insensitive" };
+
+    // Compatibilidad: "categoria" (viejo) lo usamos como búsqueda amplia en catGeneral/categoria1
+    if (categoria) {
+      where.OR = [
+        { catGeneral: { contains: categoria, mode: "insensitive" } },
+        { categoria1: { contains: categoria, mode: "insensitive" } },
+      ];
+    }
+
+    if (catGeneral) where.catGeneral = { contains: catGeneral, mode: "insensitive" };
+    if (categoria1) where.categoria1 = { contains: categoria1, mode: "insensitive" };
+
+    // Compatibilidad: "marca" (viejo) lo mapeamos a fabricanteMarca
+    const fab = fabricanteMarca || marca;
+    if (fab) where.fabricanteMarca = { contains: fab, mode: "insensitive" };
+
+    if (nombre) where.nombre = { contains: nombre, mode: "insensitive" };
+    if (certifica) where.certifica = { contains: certifica, mode: "insensitive" };
+    if (sello) where.sello = { contains: sello, mode: "insensitive" };
     if (tienda) where.tienda = { contains: tienda, mode: "insensitive" };
-    if (pesaj) where.pesaj = { contains: pesaj, mode: "insensitive" };
+
+    // "atributo" busca en atributo1/2/3
+    if (atributo) {
+      where.AND = (where.AND || []).concat([
+        {
+          OR: [
+            { atributo1: { contains: atributo, mode: "insensitive" } },
+            { atributo2: { contains: atributo, mode: "insensitive" } },
+            { atributo3: { contains: atributo, mode: "insensitive" } },
+          ],
+        },
+      ]);
+    }
+
+    // "q" (búsqueda general)
+    if (q) {
+      where.AND = (where.AND || []).concat([
+        {
+          OR: [
+            { catGeneral: { contains: q, mode: "insensitive" } },
+            { categoria1: { contains: q, mode: "insensitive" } },
+            { fabricanteMarca: { contains: q, mode: "insensitive" } },
+            { nombre: { contains: q, mode: "insensitive" } },
+            { certifica: { contains: q, mode: "insensitive" } },
+            { sello: { contains: q, mode: "insensitive" } },
+            { atributo1: { contains: q, mode: "insensitive" } },
+            { atributo2: { contains: q, mode: "insensitive" } },
+            { atributo3: { contains: q, mode: "insensitive" } },
+            { tienda: { contains: q, mode: "insensitive" } },
+          ],
+        },
+      ]);
+    }
+
+    // Compatibilidad (viejo): gf/pesaj ya no existen en v2.0, los ignoramos sin fallar
+    if (gf || pesaj) {
+      console.warn("⚠️ Se recibieron filtros legacy (gf/pesaj) pero el esquema v2.0 ya no los usa.");
+    }
 
     const productos = await prisma.Producto.findMany({
       where,
-      orderBy: { marca: "asc" },
+      orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
     });
 
     res.json(productos);
@@ -346,7 +416,7 @@ app.get("/api/productos/search", async (req, res) => {
 // ========== ADMIN PRODUCTOS ==========
 app.get("/api/admin/productos", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const productos = await prisma.Producto.findMany({ orderBy: { marca: "asc" } });
+    const productos = await prisma.Producto.findMany({ orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }] });
     res.json(productos);
   } catch (err) {
     console.error("Error en GET /api/admin/productos:", err);
@@ -358,13 +428,7 @@ app.post("/api/admin/productos", authMiddleware, adminMiddleware, async (req, re
   try {
     const data = req.body;
 
-    const payload = {
-      ...data,
-      pesaj:
-        data.pesaj === undefined || data.pesaj === null || data.pesaj === ""
-          ? null
-          : String(data.pesaj),
-    };
+    const payload = { ...data };
 
     const nuevo = await prisma.Producto.create({ data: payload });
     res.status(201).json(nuevo);
@@ -379,13 +443,7 @@ app.put("/api/admin/productos/:id", authMiddleware, adminMiddleware, async (req,
     const id = Number(req.params.id);
     const data = req.body;
 
-    const payload = {
-      ...data,
-      pesaj:
-        data.pesaj === undefined || data.pesaj === null || data.pesaj === ""
-          ? null
-          : String(data.pesaj),
-    };
+    const payload = { ...data };
 
     const actualizado = await prisma.Producto.update({ where: { id }, data: payload });
     res.json(actualizado);
@@ -456,75 +514,91 @@ app.post(
       const headersDetectados = Object.keys(rows[0] || {});
 
       const productos = rows.map((row) => {
-        // ✅ Acepta tus headers (snake_case) y los anteriores
-        const categoria = normalizeStr(
-          getAny(row, ["categoria", "Producto", "Categoria", "Categoría"])
+        // ✅ Headers esperados (BaseProductos_v2.0):
+        // Cat.General | Categoria 1 | Fabricante/Marca | Nombre | Certifica | Sello
+        // Atributo 1 | Atributo 2 | Atributo 3 | Tienda | Fotografia Producto | Fotografia Sello 1 | Fotografia Sello 2
+
+        const catGeneral = normalizeStr(
+          getAny(row, ["Cat.General", "Cat General", "cat_general", "catGeneral", "Categoria General", "Categoría General"])
         );
 
-        const marca = normalizeStr(getAny(row, ["marca", "Marca"]));
-
-        const detalle = normalizeStr(
-          getAny(row, ["detalle", "Presentacion", "Presentación", "Detalle"])
+        const categoria1 = normalizeStr(
+          getAny(row, ["Categoria 1", "Categoría 1", "categoria_1", "categoria1"])
         );
 
-        const imgProd = normalizeStr(
-          getAny(row, ["img_prod", "imgProd", "ImgProducto", "Imagen", "imageUrl"])
+        const fabricanteMarca = normalizeStr(
+          getAny(row, ["Fabricante/Marca", "Fabricante", "Marca", "fabricante_marca", "fabricanteMarca"])
         );
 
-        const sello = normalizeStr(getAny(row, ["sello", "Sello"]));
+        const nombre = normalizeStr(
+          getAny(row, ["Nombre", "nombre"])
+        );
 
         const certifica = normalizeStr(
-          getAny(row, ["certifica", "Certifica", "Certificación", "Certificacion"])
+          getAny(row, ["Certifica", "certifica"])
         );
 
-        const pol = normalizeStr(
-          getAny(row, ["pol", "Pol", "Status", "Estado"])
+        const sello = normalizeStr(
+          getAny(row, ["Sello", "sello"])
         );
 
-        const logoSello = normalizeStr(
-          getAny(row, ["logo_sello", "logoSello", "LogoSello", "Logo Sello"])
+        const atributo1 = normalizeStr(
+          getAny(row, ["Atributo 1", "atributo_1", "atributo1"])
         );
 
-        const gf = normalizeStr(getAny(row, ["gf", "GF"]));
-
-        const logoGf = normalizeStr(
-          getAny(row, ["logo_gf", "logoGf", "LogoGF", "Logo GF"])
+        const atributo2 = normalizeStr(
+          getAny(row, ["Atributo 2", "atributo_2", "atributo2"])
         );
 
-        const tienda = normalizeStr(getAny(row, ["tienda", "Tienda", "Comercio"]));
+        const atributo3 = normalizeStr(
+          getAny(row, ["Atributo 3", "atributo_3", "atributo3"])
+        );
 
-        const pesaj = normalizeStr(getAny(row, ["pesaj", "Pesaj"]));
+        const tienda = normalizeStr(
+          getAny(row, ["Tienda", "tienda", "Comercio"])
+        );
 
-        // Normalización extra
-        const pesajNorm =
-          pesaj === "" ? null : String(pesaj);
+        const fotoProducto = normalizeStr(
+          getAny(row, ["Fotografia Producto", "Fotografía Producto", "foto_producto", "fotoProducto", "Foto Producto", "Imagen"])
+        );
+
+        const fotoSello1 = normalizeStr(
+          getAny(row, ["Fotografia Sello 1", "Fotografía Sello 1", "foto_sello_1", "fotoSello1", "LogoSello1", "Logo Sello 1"])
+        );
+
+        const fotoSello2 = normalizeStr(
+          getAny(row, ["Fotografia Sello 2", "Fotografía Sello 2", "foto_sello_2", "fotoSello2", "LogoSello2", "Logo Sello 2"])
+        );
 
         return {
-          categoria: categoria || null,
-          marca: marca || null,
-          detalle: detalle || null,
-          imgProd: imgProd || null,
-          sello: sello || null,
+          catGeneral: catGeneral || null,
+          categoria1: categoria1 || null,
+          fabricanteMarca: fabricanteMarca || null,
+          nombre: nombre || null,
           certifica: certifica || null,
-          pol: pol || null,
-          logoSello: logoSello || null,
-          gf: gf || null,
-          logoGf: logoGf || null,
+          sello: sello || null,
+          atributo1: atributo1 || null,
+          atributo2: atributo2 || null,
+          atributo3: atributo3 || null,
           tienda: tienda || null,
-          pesaj: pesajNorm,
+          fotoProducto: fotoProducto || null,
+          fotoSello1: fotoSello1 || null,
+          fotoSello2: fotoSello2 || null,
         };
       });
 
       // ✅ Reglas de “fila válida”
+
       // Yo recomiendo exigir al menos categoria + marca (para no meter basura)
       const productosValidos = productos.filter((p) => {
-        return Boolean(p.categoria) && Boolean(p.marca);
+        // Recomendación: exigir al menos Fabricante/Marca + Nombre
+        return Boolean(p.fabricanteMarca) && Boolean(p.nombre);
       });
 
       if (productosValidos.length === 0) {
         return res.status(400).json({
           message:
-            "No se encontraron filas válidas. Asegúrate de que existan columnas 'categoria' y 'marca' (o 'Categoria' y 'Marca') y que tengan datos.",
+            "No se encontraron filas válidas. Asegúrate de que existan columnas 'Fabricante/Marca' y 'Nombre' (o sus equivalentes) y que tengan datos.",
           headersDetectados,
           ejemploFila: rows[0],
         });

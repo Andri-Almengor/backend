@@ -1,107 +1,57 @@
-// Backend/scripts/importProductosKCcr.js
-const path = require("path");
-const xlsx = require("xlsx");
-const { PrismaClient } = require("@prisma/client");
+import path from "path";
+import fs from "fs";
+import xlsx from "xlsx";
+import { PrismaClient } from "@prisma/client";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const prisma = new PrismaClient();
 
-// Limpia valores: null para vacío
-function clean(value) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === "number" && Number.isNaN(value)) return null;
-  const s = String(value).trim();
-  return s === "" ? null : s;
-}
-
-// Limpia y recorta a un máximo de caracteres
-function cleanLimit(value, max) {
-  const v = clean(value);
-  if (v == null) return null;
-  if (v.length > max) {
-    return v.slice(0, max);
-  }
-  return v;
-}
-
 async function main() {
-  const filePath = path.join(__dirname, "..", "data", "BaseProductosKCcr.xlsx");
-  console.log("Leyendo archivo:", filePath);
+  const excelPath = path.join(__dirname, "../data/BaseProductos_v2.0.xlsx");
 
-  const workbook = xlsx.readFile(filePath);
-  const sheetName = "items"; // hoja del Excel
-  const worksheet = workbook.Sheets[sheetName];
-
-  if (!worksheet) {
-    throw new Error(`No se encontró la hoja "${sheetName}" en el Excel.`);
+  if (!fs.existsSync(excelPath)) {
+    throw new Error("❌ No se encontró BaseProductos_v2.0.xlsx");
   }
 
-  const rows = xlsx.utils.sheet_to_json(worksheet);
-  console.log("Filas leídas:", rows.length);
+  const workbook = xlsx.readFile(excelPath);
+  const sheetName =
+    workbook.Sheets["Final_02-26"]
+      ? "Final_02-26"
+      : workbook.SheetNames[0];
 
-  const productos = rows
-    .map((row, index) => {
-      // Mapeo por nombre de columna del Excel
-      const categoria = cleanLimit(row["Producto"], 190);      // B
-      const marca = cleanLimit(row["Marca"], 190);             // C
-      const detalle = cleanLimit(row["Presentacion"], 255);    // D
+  const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-      // Si falta marca y detalle, no tiene sentido guardar
-      if (!marca && !detalle) {
-        // console.warn(`Fila ${index + 2}: sin marca ni detalle, se omite.`);
-        return null;
-      }
+  console.log(`📦 Importando ${rows.length} productos...`);
 
-      const imgProd = cleanLimit(row["Foto"], 255);            // E (URL)
-      const sello = cleanLimit(row["Con/Sin sello"], 100);     // F
-      const certifica = cleanLimit(row["Certificado"], 255);   // G
-      const pol = cleanLimit(row["Status"], 255);              // H
-      const logoSello = cleanLimit(row["Unnamed: 8"], 255);    // I (URL)
-      const gf = cleanLimit(row["GF"], 100);                   // J
-      const logoGf = cleanLimit(row["Unnamed: 10"], 255);      // K (URL)
-      const tienda = cleanLimit(row["Establecimiento"], 255);  // L
-      const pesaj = cleanLimit(row["Unnamed: 12"], 100);       // M
-
-      return {
-        // En tu schema, categoria y marca son String (no opcionales)
-        categoria: categoria || "",
-        marca: marca || "",
-        detalle,
-        imgProd,
-        sello,
-        certifica,
-        pol,
-        logoSello,
-        gf,
-        logoGf,
-        tienda,
-        pesaj,
-      };
-    })
-    .filter(Boolean);
-
-  console.log("Productos a insertar:", productos.length);
-
-  // ⚠️ OPCIONAL: si quieres limpiar la tabla antes de importar, descomenta esto:
-  // console.log("Borrando todos los productos existentes...");
-  // await prisma.Producto.deleteMany({});
-
-  const chunkSize = 200;
-  for (let i = 0; i < productos.length; i += chunkSize) {
-    const chunk = productos.slice(i, i + chunkSize);
-    console.log(`Insertando productos ${i + 1} - ${i + chunk.length} ...`);
-
-    await prisma.Producto.createMany({
-      data: chunk,
-      // skipDuplicates: true, // sólo funciona si tienes algún campo UNIQUE definido
+  for (const r of rows) {
+    await prisma.producto.create({
+      data: {
+        catGeneral: r["Cat.General"] ?? "N/A",
+        categoria1: r["Categoria 1"] ?? "N/A",
+        fabricanteMarca: r["Fabricante/Marca"] ?? "N/A",
+        nombre: r["Nombre"] ?? "N/A",
+        certifica: r["Certifica"] ?? null,
+        sello: r["Sello"] ?? null,
+        atributo1: r["Atributo 1"] ?? null,
+        atributo2: r["Atributo 2"] ?? null,
+        atributo3: r["Atributo 3"] ?? null,
+        tienda: r["Tienda"] ?? null,
+        fotoProducto: r["Fotografia Producto"] ?? null,
+        fotoSello1: r["Fotografia Sello 1"] ?? null,
+        fotoSello2: r["Fotografia Sello 2"] ?? null,
+      },
     });
   }
 
-  console.log("✅ Importación completada.");
+  console.log("✅ Importación completada");
 }
 
 main()
   .catch((e) => {
-    console.error("❌ Error en importación:", e);
+    console.error(e);
   })
   .finally(async () => {
     await prisma.$disconnect();
