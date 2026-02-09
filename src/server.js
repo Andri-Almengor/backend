@@ -27,6 +27,48 @@ app.use(express.json());
 // ✅ ROUTER EVENTOS
 app.use("/api/events", eventsRouter);
 
+// =====================================================
+// ✅ SELECT FIJO PARA PRODUCTOS (evita columna "existe")
+// =====================================================
+// Ajustá aquí si en tu Prisma tienes otros nombres.
+const PRODUCTO_SELECT = {
+  id: true,
+  catGeneral: true,
+  categoria1: true,
+  fabricanteMarca: true,
+  nombre: true,
+  certifica: true,
+  sello: true,
+  atributo1: true,
+  atributo2: true,
+  atributo3: true,
+  tienda: true,
+  fotoProducto: true,
+  fotoSello1: true,
+  fotoSello2: true,
+
+  // Si tu tabla tiene timestamps y los usas, podés activarlos:
+  // creadoEn: true,
+  // actualizadoEn: true,
+};
+
+// Sanitiza payload para NO mandar columnas inexistentes (como "existe")
+function sanitizeProductoPayload(input) {
+  if (!input || typeof input !== "object") return {};
+
+  // Copia segura
+  const p = { ...input };
+
+  // ❌ elimina legacy / columnas que no existen en DB
+  delete p.existe;
+
+  // Si te llegan campos viejos del front (compatibilidad), podés mapearlos aquí:
+  // if (p.categoria && !p.categoria1) p.categoria1 = p.categoria;
+  // if (p.marca && !p.fabricanteMarca) p.fabricanteMarca = p.marca;
+
+  return p;
+}
+
 // ========== SEED ADMIN POR DEFECTO ==========
 async function ensureAdminUser() {
   try {
@@ -223,19 +265,6 @@ app.delete("/api/admin/usuarios/:id", authMiddleware, adminMiddleware, async (re
   }
 });
 
-// ========== PRODUCTOS PÚBLICOS ==========
-app.get("/api/productos", async (req, res) => {
-  try {
-    const productos = await prisma.Producto.findMany({
-      orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
-    });
-    res.json(productos);
-  } catch (err) {
-    console.error("Error en GET /api/productos", err);
-    res.status(500).json({ message: "Error en el servidor" });
-  }
-});
-
 // ✅ EDITAR ADMIN (UPDATE)
 app.put("/api/admin/usuarios/:id", authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -246,7 +275,6 @@ app.put("/api/admin/usuarios/:id", authMiddleware, adminMiddleware, async (req, 
       return res.status(400).json({ message: "ID inválido" });
     }
 
-    // Si el admin intenta cambiar email, valida duplicado
     if (email) {
       const existing = await prisma.Usuario.findUnique({ where: { email } });
       if (existing && existing.id !== id) {
@@ -258,7 +286,6 @@ app.put("/api/admin/usuarios/:id", authMiddleware, adminMiddleware, async (req, 
     if (nombre !== undefined) data.nombre = nombre;
     if (email !== undefined) data.email = email;
 
-    // Si envían password, recalculamos hash
     if (password) {
       const passwordHash = await bcrypt.hash(password, 10);
       data.passwordHash = passwordHash;
@@ -282,6 +309,48 @@ app.put("/api/admin/usuarios/:id", authMiddleware, adminMiddleware, async (req, 
   }
 });
 
+// =====================================================
+// ========== PRODUCTOS PÚBLICOS (con select fijo) ======
+// =====================================================
+app.get("/api/productos", async (req, res) => {
+  try {
+    const productos = await prisma.Producto.findMany({
+      select: PRODUCTO_SELECT,
+      orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
+    });
+    res.json(productos);
+  } catch (err) {
+    console.error("Error en GET /api/productos", err);
+    res.status(500).json({ message: "Error en el servidor" });
+  }
+});
+
+
+// ✅ EXPORTAR PRODUCTOS A EXCEL (PÚBLICO)
+app.get("/api/productos/export/excel", async (req, res) => {
+  try {
+    const productos = await prisma.Producto.findMany({
+      select: PRODUCTO_SELECT,
+      orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
+    });
+
+    const ws = xlsx.utils.json_to_sheet(productos);
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, "Productos");
+
+    const buffer = xlsx.write(wb, { type: "buffer", bookType: "xlsx" });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", 'attachment; filename="productos.xlsx"');
+    return res.send(buffer);
+  } catch (err) {
+    console.error("Error en GET /api/productos/export/excel:", err);
+    res.status(500).json({ message: "Error en el servidor" });
+  }
+});
 
 app.get("/api/productos/paged", async (req, res) => {
   try {
@@ -290,7 +359,12 @@ app.get("/api/productos/paged", async (req, res) => {
     const skip = (page - 1) * pageSize;
 
     const [items, total] = await Promise.all([
-      prisma.Producto.findMany({ skip, take: pageSize, orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }] }),
+      prisma.Producto.findMany({
+        select: PRODUCTO_SELECT,
+        skip,
+        take: pageSize,
+        orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
+      }),
       prisma.Producto.count(),
     ]);
 
@@ -301,29 +375,9 @@ app.get("/api/productos/paged", async (req, res) => {
   }
 });
 
-app.get("/api/productos/:id", async (req, res) => {
-  try {
-    const rawId = req.params.id;
-    const id = Number(rawId);
-
-    if (!rawId || !Number.isInteger(id) || id <= 0) {
-      return res.status(404).json({ message: "Producto no encontrado" });
-    }
-
-    const producto = await prisma.Producto.findUnique({ where: { id } });
-    if (!producto) return res.status(404).json({ message: "Producto no encontrado" });
-
-    res.json(producto);
-  } catch (err) {
-    console.error("Error en GET /api/productos/:id", err);
-    res.status(500).json({ message: "Error en el servidor" });
-  }
-});
-
 app.get("/api/productos/search", async (req, res) => {
   try {
     const {
-      // ✅ nuevos filtros (v2.0)
       catGeneral,
       categoria1,
       fabricanteMarca,
@@ -334,7 +388,7 @@ app.get("/api/productos/search", async (req, res) => {
       tienda,
       q,
 
-      // ✅ compatibilidad con filtros viejos
+      // compatibilidad legacy
       categoria,
       marca,
       gf,
@@ -343,7 +397,6 @@ app.get("/api/productos/search", async (req, res) => {
 
     const where = {};
 
-    // Compatibilidad: "categoria" (viejo) lo usamos como búsqueda amplia en catGeneral/categoria1
     if (categoria) {
       where.OR = [
         { catGeneral: { contains: categoria, mode: "insensitive" } },
@@ -354,7 +407,6 @@ app.get("/api/productos/search", async (req, res) => {
     if (catGeneral) where.catGeneral = { contains: catGeneral, mode: "insensitive" };
     if (categoria1) where.categoria1 = { contains: categoria1, mode: "insensitive" };
 
-    // Compatibilidad: "marca" (viejo) lo mapeamos a fabricanteMarca
     const fab = fabricanteMarca || marca;
     if (fab) where.fabricanteMarca = { contains: fab, mode: "insensitive" };
 
@@ -363,7 +415,6 @@ app.get("/api/productos/search", async (req, res) => {
     if (sello) where.sello = { contains: sello, mode: "insensitive" };
     if (tienda) where.tienda = { contains: tienda, mode: "insensitive" };
 
-    // "atributo" busca en atributo1/2/3
     if (atributo) {
       where.AND = (where.AND || []).concat([
         {
@@ -376,7 +427,6 @@ app.get("/api/productos/search", async (req, res) => {
       ]);
     }
 
-    // "q" (búsqueda general)
     if (q) {
       where.AND = (where.AND || []).concat([
         {
@@ -396,13 +446,13 @@ app.get("/api/productos/search", async (req, res) => {
       ]);
     }
 
-    // Compatibilidad (viejo): gf/pesaj ya no existen en v2.0, los ignoramos sin fallar
     if (gf || pesaj) {
       console.warn("⚠️ Se recibieron filtros legacy (gf/pesaj) pero el esquema v2.0 ya no los usa.");
     }
 
     const productos = await prisma.Producto.findMany({
       where,
+      select: PRODUCTO_SELECT,
       orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
     });
 
@@ -413,10 +463,38 @@ app.get("/api/productos/search", async (req, res) => {
   }
 });
 
-// ========== ADMIN PRODUCTOS ==========
+app.get("/api/productos/:id", async (req, res) => {
+  try {
+    const rawId = req.params.id;
+    const id = Number(rawId);
+
+    if (!rawId || !Number.isInteger(id) || id <= 0) {
+      return res.status(404).json({ message: "Producto no encontrado" });
+    }
+
+    const producto = await prisma.Producto.findUnique({
+      where: { id },
+      select: PRODUCTO_SELECT,
+    });
+    if (!producto) return res.status(404).json({ message: "Producto no encontrado" });
+
+    res.json(producto);
+  } catch (err) {
+    console.error("Error en GET /api/productos/:id", err);
+    res.status(500).json({ message: "Error en el servidor" });
+  }
+});
+
+
+// =====================================================
+// ========== ADMIN PRODUCTOS (con select fijo) =========
+// =====================================================
 app.get("/api/admin/productos", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const productos = await prisma.Producto.findMany({ orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }] });
+    const productos = await prisma.Producto.findMany({
+      select: PRODUCTO_SELECT,
+      orderBy: [{ fabricanteMarca: "asc" }, { nombre: "asc" }],
+    });
     res.json(productos);
   } catch (err) {
     console.error("Error en GET /api/admin/productos:", err);
@@ -426,11 +504,11 @@ app.get("/api/admin/productos", authMiddleware, adminMiddleware, async (req, res
 
 app.post("/api/admin/productos", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const data = req.body;
-
-    const payload = { ...data };
-
-    const nuevo = await prisma.Producto.create({ data: payload });
+    const payload = sanitizeProductoPayload(req.body);
+    const nuevo = await prisma.Producto.create({
+      data: payload,
+      select: PRODUCTO_SELECT,
+    });
     res.status(201).json(nuevo);
   } catch (err) {
     console.error("Error en POST /api/admin/productos:", err);
@@ -441,11 +519,13 @@ app.post("/api/admin/productos", authMiddleware, adminMiddleware, async (req, re
 app.put("/api/admin/productos/:id", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const data = req.body;
+    const payload = sanitizeProductoPayload(req.body);
 
-    const payload = { ...data };
-
-    const actualizado = await prisma.Producto.update({ where: { id }, data: payload });
+    const actualizado = await prisma.Producto.update({
+      where: { id },
+      data: payload,
+      select: PRODUCTO_SELECT,
+    });
     res.json(actualizado);
   } catch (err) {
     console.error("Error en PUT /api/admin/productos/:id:", err);
@@ -470,14 +550,11 @@ function normalizeStr(value) {
   return String(value).trim();
 }
 
-// Busca una columna por múltiples nombres posibles (incluye case-insensitive)
 function getAny(row, keys) {
-  // 1) Intento directo
   for (const k of keys) {
     if (row[k] !== undefined) return row[k];
   }
 
-  // 2) Intento case-insensitive
   const lower = Object.fromEntries(
     Object.entries(row).map(([k, v]) => [String(k).toLowerCase(), v])
   );
@@ -510,14 +587,9 @@ app.post(
         return res.status(400).json({ message: "El Excel no tiene filas" });
       }
 
-      // Para debug: ver encabezados reales detectados
       const headersDetectados = Object.keys(rows[0] || {});
 
       const productos = rows.map((row) => {
-        // ✅ Headers esperados (BaseProductos_v2.0):
-        // Cat.General | Categoria 1 | Fabricante/Marca | Nombre | Certifica | Sello
-        // Atributo 1 | Atributo 2 | Atributo 3 | Tienda | Fotografia Producto | Fotografia Sello 1 | Fotografia Sello 2
-
         const catGeneral = normalizeStr(
           getAny(row, ["Cat.General", "Cat General", "cat_general", "catGeneral", "Categoria General", "Categoría General"])
         );
@@ -530,33 +602,15 @@ app.post(
           getAny(row, ["Fabricante/Marca", "Fabricante", "Marca", "fabricante_marca", "fabricanteMarca"])
         );
 
-        const nombre = normalizeStr(
-          getAny(row, ["Nombre", "nombre"])
-        );
+        const nombre = normalizeStr(getAny(row, ["Nombre", "nombre"]));
+        const certifica = normalizeStr(getAny(row, ["Certifica", "certifica"]));
+        const sello = normalizeStr(getAny(row, ["Sello", "sello"]));
 
-        const certifica = normalizeStr(
-          getAny(row, ["Certifica", "certifica"])
-        );
+        const atributo1 = normalizeStr(getAny(row, ["Atributo 1", "atributo_1", "atributo1"]));
+        const atributo2 = normalizeStr(getAny(row, ["Atributo 2", "atributo_2", "atributo2"]));
+        const atributo3 = normalizeStr(getAny(row, ["Atributo 3", "atributo_3", "atributo3"]));
 
-        const sello = normalizeStr(
-          getAny(row, ["Sello", "sello"])
-        );
-
-        const atributo1 = normalizeStr(
-          getAny(row, ["Atributo 1", "atributo_1", "atributo1"])
-        );
-
-        const atributo2 = normalizeStr(
-          getAny(row, ["Atributo 2", "atributo_2", "atributo2"])
-        );
-
-        const atributo3 = normalizeStr(
-          getAny(row, ["Atributo 3", "atributo_3", "atributo3"])
-        );
-
-        const tienda = normalizeStr(
-          getAny(row, ["Tienda", "tienda", "Comercio"])
-        );
+        const tienda = normalizeStr(getAny(row, ["Tienda", "tienda", "Comercio"]));
 
         const fotoProducto = normalizeStr(
           getAny(row, ["Fotografia Producto", "Fotografía Producto", "foto_producto", "fotoProducto", "Foto Producto", "Imagen"])
@@ -570,7 +624,7 @@ app.post(
           getAny(row, ["Fotografia Sello 2", "Fotografía Sello 2", "foto_sello_2", "fotoSello2", "LogoSello2", "Logo Sello 2"])
         );
 
-        return {
+        return sanitizeProductoPayload({
           catGeneral: catGeneral || null,
           categoria1: categoria1 || null,
           fabricanteMarca: fabricanteMarca || null,
@@ -584,27 +638,20 @@ app.post(
           fotoProducto: fotoProducto || null,
           fotoSello1: fotoSello1 || null,
           fotoSello2: fotoSello2 || null,
-        };
+        });
       });
 
-      // ✅ Reglas de “fila válida”
-
-      // Yo recomiendo exigir al menos categoria + marca (para no meter basura)
-      const productosValidos = productos.filter((p) => {
-        // Recomendación: exigir al menos Fabricante/Marca + Nombre
-        return Boolean(p.fabricanteMarca) && Boolean(p.nombre);
-      });
+      const productosValidos = productos.filter((p) => Boolean(p.fabricanteMarca) && Boolean(p.nombre));
 
       if (productosValidos.length === 0) {
         return res.status(400).json({
           message:
-            "No se encontraron filas válidas. Asegúrate de que existan columnas 'Fabricante/Marca' y 'Nombre' (o sus equivalentes) y que tengan datos.",
+            "No se encontraron filas válidas. Asegúrate de que existan columnas 'Fabricante/Marca' y 'Nombre' (o equivalentes) y que tengan datos.",
           headersDetectados,
           ejemploFila: rows[0],
         });
       }
 
-      // Insert en chunks
       const chunkSize = 200;
       let totalInsertados = 0;
 
@@ -613,12 +660,9 @@ app.post(
 
         const result = await prisma.Producto.createMany({
           data: chunk,
-          // Si quieres evitar errores por duplicados necesitas un índice unique en DB.
-          // Si no existe, puedes quitar esto, pero lo dejamos como lo tenías.
           skipDuplicates: true,
         });
 
-        // createMany retorna { count }
         totalInsertados += result.count ?? 0;
       }
 
@@ -639,11 +683,10 @@ app.post(
   }
 );
 
-
 // ========== NOTICIAS ==========
 app.post("/api/admin/noticias", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { titulo, contenido, imageUrl, fileUrl } = req.body;
+    const { titulo, contenido, imageUrl, fileUrl, destino } = req.body;
 
     if (!titulo) {
       return res.status(400).json({ message: "El título es obligatorio" });
@@ -655,6 +698,7 @@ app.post("/api/admin/noticias", authMiddleware, adminMiddleware, async (req, res
         contenido: contenido || null,
         imageUrl: imageUrl || null,
         fileUrl: fileUrl || null,
+        destino: destino || "NOVEDADES",
         autorId: req.user.id,
       },
     });
@@ -668,7 +712,13 @@ app.post("/api/admin/noticias", authMiddleware, adminMiddleware, async (req, res
 
 app.get("/api/noticias", async (req, res) => {
   try {
+    const { destino } = req.query;
+
+    const where = {};
+    if (destino) where.destino = destino; // "NOVEDADES" | "ANUNCIANTES"
+
     const noticias = await prisma.Noticia.findMany({
+      where,
       orderBy: { creadoEn: "desc" },
     });
     res.json(noticias);
@@ -677,6 +727,7 @@ app.get("/api/noticias", async (req, res) => {
     res.status(500).json({ message: "Error en el servidor" });
   }
 });
+
 
 app.get("/api/noticias/:id", async (req, res) => {
   try {
@@ -697,7 +748,7 @@ app.get("/api/noticias/:id", async (req, res) => {
 app.put("/api/admin/noticias/:id", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { titulo, contenido, imageUrl, fileUrl } = req.body;
+    const { titulo, contenido, imageUrl, fileUrl, destino } = req.body;
 
     const noticia = await prisma.Noticia.update({
       where: { id },
@@ -706,6 +757,7 @@ app.put("/api/admin/noticias/:id", authMiddleware, adminMiddleware, async (req, 
         contenido,
         imageUrl,
         fileUrl,
+        ...(destino ? { destino } : {}),
         actualizadoEn: new Date(),
       },
     });

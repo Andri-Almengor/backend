@@ -87,7 +87,7 @@ model ForoHilo {
   titulo        String
   contenido     String
   productoId    Int?     @map("producto_id")
-  esCerrado     Boolean  @default(false) @map("es_cerrado")
+  esCerrado     Boolean?  @default(false) @map("es_cerrado")
   creadoEn      DateTime @default(now()) @map("creado_en")
   actualizadoEn DateTime @default(now()) @map("actualizado_en")
 
@@ -128,20 +128,30 @@ model ForoRespuestaLike {
   @@map("foro_respuestas_likes")
 }
 
+enum NoticiaDestino {
+  NOVEDADES
+  ANUNCIANTES
+}
+
 model Noticia {
   id            Int      @id @default(autoincrement())
   titulo        String
   contenido     String?
   imageUrl      String?  @map("image_url")
   fileUrl       String?  @map("file_url")
+
+  destino       NoticiaDestino @default(NOVEDADES) @map("destino")
+
   creadoEn      DateTime @default(now()) @map("creado_en")
   actualizadoEn DateTime @default(now()) @map("actualizado_en")
 
   autorId Int     @map("autor_id")
   autor   Usuario @relation(fields: [autorId], references: [id])
 
+  @@index([destino])
   @@map("noticias")
 }
+
 
 model EventoSuscripcion {
   id           Int      @id @default(autoincrement())
